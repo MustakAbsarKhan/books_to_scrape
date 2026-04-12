@@ -3,24 +3,6 @@ from bs4 import BeautifulSoup as bs4
 
 baseURL = "https://books.toscrape.com/index.html"
 
-# Initializng a session to persist certain parameters across requests
-session = requests.session()
-
-#Headers to mimic a real browser visit
-headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-}
-
-#add headers to the session
-session.headers.update(headers)
-
-# Get the HTML content of the page
-response = session.get(baseURL)
-soup = bs4(response.content, 'lxml')
-
-# Find all the book containers on the page
-books = soup.find_all('article', class_='product_pod')
-
 # Extract the details of each book and print them
 def extract_all_book_details(books):
     # Loop through each book container and extract the title and price
@@ -47,7 +29,7 @@ def extract_all_book_details(books):
     return product_page_url, next_page_url
 
 # Extract the Individual book details from the product page
-def extract_book_details_from_product_page(product_page_url):    
+def extract_individual_book_details(product_page_url):    
         product_response = session.get(product_page_url)
         product_soup = bs4(product_response.content, 'lxml')
         
@@ -69,10 +51,11 @@ def extract_book_details_from_product_page(product_page_url):
         print("=" * 40)
         
 # Main function to orchestrate the scraping process
-def main():
+def read_all_pages(books):
+    # Extract the details of the books on the first page and get the product page URL and next page URL
     product_page_url, next_page_url = extract_all_book_details(books)
     
-    extract_book_details_from_product_page(product_page_url)
+    extract_individual_book_details(product_page_url)
     
     # Loop through the next pages until there are no more
     while next_page_url:
@@ -80,3 +63,34 @@ def main():
         soup = bs4(response.content, 'lxml')
         books = soup.find_all('article', class_='product_pod')
         product_page_url, next_page_url = extract_all_book_details(books)
+
+
+
+# Function to fetch the HTML content of the page and process it
+def fetch_process_html():
+    # Initializng a session to persist certain parameters across requests
+    session = requests.session()
+
+    #Headers to mimic a real browser visit
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+
+    #add headers to the session
+    session.headers.update(headers)
+
+    # Get the HTML content of the page
+    response = session.get(baseURL)
+    soup = bs4(response.content, 'lxml')
+
+    # Find all the book containers on the page
+    books = soup.find_all('article', class_='product_pod')
+    return books, session, soup
+
+
+
+# Start the scraping process 
+books, session, soup = fetch_process_html()
+read_all_pages(books)
+
+
