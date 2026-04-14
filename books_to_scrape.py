@@ -1,145 +1,214 @@
 """
-Async Web Scraper with:
-- Concurrency control (Semaphore)
-- Dynamic rate limiting (auto speed up / slow down)
-- Adaptive delay (adjust speed based on server response time)
-- Clean structure and beginner-friendly comments
+=========================================================
+ASYNC WEB SCRAPER (BEGINNER-FRIENDLY VERSION)
+=========================================================
 
-Target site: https://books.toscrape.com/
+This script scrapes book data from:
+👉 https://books.toscrape.com/
+
+It demonstrates:
+- Async scraping (aiohttp)
+- Concurrency control (Semaphore)
+- Adaptive delay (changes speed based on server response)
+- Dynamic performance tuning
+- CSV export (final dataset)
+
+---------------------------------------------------------
+WHY THIS SCRIPT EXISTS:
+---------------------------------------------------------
+Real-world websites:
+- block too many requests
+- respond differently based on load
+- require controlled scraping speed
+
+So this scraper:
+👉 automatically adapts like a "smart system"
 """
 
-import asyncio
-import random
-import aiohttp
-import time
-from urllib.parse import urljoin
-from bs4 import BeautifulSoup as bs4
+# =========================================================
+# 📦 IMPORTS (libraries used)
+# =========================================================
+
+import asyncio          # for async programming (concurrent tasks)
+import aiohttp         # for async HTTP requests
+import time            # to measure response speed
+import random          # for small delays (human-like behavior)
+import csv             # for saving final data to CSV
+from urllib.parse import urljoin  # to build full URLs
+from bs4 import BeautifulSoup as bs4  # to parse HTML
 
 
 # =========================================================
-# 🔧 CONFIGURATION
+# 🌍 BASE CONFIGURATION
 # =========================================================
 
 BASE_URL = "https://books.toscrape.com/"
 
+# Headers make our request look like a real browser
 HEADERS = {
     "User-Agent": "Mozilla/5.0"
 }
 
-# Initial concurrency (how many requests at once)
+
+# =========================================================
+# ⚡ CONCURRENCY CONTROL (HOW MANY REQUESTS AT ONCE)
+# =========================================================
+
 concurrency_limit = 5
 semaphore = asyncio.Semaphore(concurrency_limit)
 
-# Counters used for dynamic rate control
-success_count = 0
-fail_count = 0
-
-# ---------------------------
-# 🕒 Adaptive Delay Settings
-# ---------------------------
-delay = 0.2          # starting delay between requests
-min_delay = 0.1      # fastest allowed
-max_delay = 3        # slowest allowed
+"""
+WHY THIS EXISTS:
+- Without this → we may send TOO many requests at once
+- Websites may block us (429 / 403 errors)
+"""
 
 
 # =========================================================
-# ⚙️ DYNAMIC CONCURRENCY CONTROL
+# 📊 PERFORMANCE TRACKING VARIABLES
+# =========================================================
+
+success_count = 0
+fail_count = 0
+
+"""
+WHY THIS EXISTS:
+We use these counters to:
+- detect if scraping is too fast (success)
+- detect if scraping is getting blocked (fail)
+"""
+
+
+# =========================================================
+# 🕒 ADAPTIVE DELAY SETTINGS
+# =========================================================
+
+delay = 0.2        # starting delay between requests
+min_delay = 0.1    # fastest allowed speed
+max_delay = 3      # slowest allowed speed
+
+"""
+WHY THIS EXISTS:
+- Too fast → risk blocking
+- Too slow → inefficient scraping
+So we automatically adjust speed.
+"""
+
+
+# =========================================================
+# ⚙️ CONCURRENCY ADAPTATION LOGIC
 # =========================================================
 
 def adjust_concurrency():
     """
-    Dynamically adjust how many requests run in parallel.
+    This function changes how many requests run at the same time.
 
-    - Many failures → reduce concurrency (slow down)
-    - Many successes → increase concurrency (speed up)
+    THINK OF IT LIKE:
+    - too many errors → slow down system
+    - too many successes → speed up system
     """
+
     global concurrency_limit, semaphore, success_count, fail_count
 
+    # 🚫 If scraping is failing often → reduce speed
     if fail_count >= 3:
         concurrency_limit = max(1, concurrency_limit - 1)
         semaphore = asyncio.Semaphore(concurrency_limit)
 
         print(f"🐢 Slowing down → concurrency = {concurrency_limit}")
-        fail_count = 0
 
+        fail_count = 0  # reset counter
+
+    # 🚀 If everything is smooth → increase speed
     elif success_count >= 10:
         concurrency_limit += 1
         semaphore = asyncio.Semaphore(concurrency_limit)
 
         print(f"🚀 Speeding up → concurrency = {concurrency_limit}")
-        success_count = 0
+
+        success_count = 0  # reset counter
 
 
 # =========================================================
-# ⚙️ ADAPTIVE DELAY CONTROL
+# ⚙️ ADAPTIVE DELAY LOGIC (VERY IMPORTANT)
 # =========================================================
 
 def adjust_delay(response_time=None, status=None):
     """
-    Dynamically adjust delay between requests.
+    This function adjusts WAIT TIME between requests.
 
-    Logic:
-    - Slow response → increase delay
-    - Blocked (429/403) → increase delay more
-    - Fast response → decrease delay
+    WHY THIS IS NEEDED:
+    - Some servers slow down under load
+    - Some block too many requests
+    - Some respond fast and allow speed-up
     """
+
     global delay
 
-    # 🚫 Blocked → aggressively slow down
+    # 🚫 If blocked → slow down heavily
     if status in (403, 429):
         delay = min(max_delay, delay + 0.5)
-        print(f"🚫 Block detected → delay = {round(delay, 2)}s")
+        print(f"🚫 Block detected → delay increased to {round(delay,2)}s")
 
-    # 🐢 Slow server → increase delay
+    # 🐢 If server is slow → increase delay slightly
     elif response_time and response_time > 1.5:
         delay = min(max_delay, delay + 0.2)
-        print(f"🐢 Slow response ({round(response_time,2)}s) → delay = {round(delay, 2)}s")
+        print(f"🐢 Slow response → delay = {round(delay,2)}s")
 
-    # 🚀 Fast server → reduce delay
+    # 🚀 If server is fast → reduce delay
     elif response_time and response_time < 0.5:
         delay = max(min_delay, delay - 0.05)
-        print(f"🚀 Fast response ({round(response_time,2)}s) → delay = {round(delay, 2)}s")
+        print(f"🚀 Fast response → delay = {round(delay,2)}s")
 
 
 # =========================================================
-# 🌐 FETCH HTML (CORE ASYNC FUNCTION)
+# 🌐 FETCH PAGE (CORE NETWORK FUNCTION)
 # =========================================================
 
 async def fetch_soup(session, url):
     """
-    Fetch a page and return BeautifulSoup object.
-
-    Features:
-    - Concurrency control (Semaphore)
-    - Dynamic concurrency adjustment
-    - Adaptive delay (based on response time)
+    This function:
+    1. Sends HTTP request
+    2. Measures response time
+    3. Applies concurrency control
+    4. Applies adaptive delay
+    5. Returns parsed HTML (BeautifulSoup)
     """
 
     global success_count, fail_count
 
+    # limit number of simultaneous requests
     async with semaphore:
-        start_time = time.perf_counter()  # start timer
+
+        # start timer
+        start_time = time.perf_counter()
 
         try:
             async with session.get(url) as response:
 
+                # measure how long request took
                 end_time = time.perf_counter()
                 response_time = end_time - start_time
 
-                # ✅ Successful request
+                # =========================
+                # CASE 1: SUCCESS
+                # =========================
                 if response.status == 200:
-                    html = await response.text()
+                    raw = await response.read()
+                    html = raw.decode("utf-8-sig", errors="ignore")
                     success_count += 1
 
                     adjust_concurrency()
                     adjust_delay(response_time=response_time)
 
-                    # Apply adaptive delay (non-blocking)
+                    # small pause to behave more naturally
                     await asyncio.sleep(delay)
 
                     return bs4(html, "lxml")
 
-                # 🚫 Blocked
+                # =========================
+                # CASE 2: BLOCKED
+                # =========================
                 elif response.status in (403, 429):
                     print(f"🚫 Blocked: {url} | {response.status}")
                     fail_count += 1
@@ -149,7 +218,9 @@ async def fetch_soup(session, url):
 
                     return None
 
-                # ⚠️ Other failures
+                # =========================
+                # CASE 3: OTHER ERRORS
+                # =========================
                 else:
                     print(f"⚠️ Failed: {url} | {response.status}")
                     fail_count += 1
@@ -160,7 +231,8 @@ async def fetch_soup(session, url):
                     return None
 
         except Exception as e:
-            print(f"⚠️ Error fetching {url} | {e}")
+            # network failure / timeout / DNS error etc.
+            print(f"⚠️ Error: {url} | {e}")
             fail_count += 1
 
             adjust_concurrency()
@@ -170,44 +242,38 @@ async def fetch_soup(session, url):
 
 
 # =========================================================
-# 📄 PARSE CATALOGUE PAGE
+# 📄 PARSE CATALOGUE PAGE (LIST PAGE)
 # =========================================================
 
 def parse_catalogue_page(soup, base_url):
     """
-    Extract book summaries + collect product URLs
+    This function extracts:
+    - basic book info (title, price, rating)
+    - product URLs (for detailed pages)
     """
 
     books = soup.find_all("article", class_="product_pod")
+
     product_urls = []
 
     for book in books:
-        title = book.h3.a["title"]
-        price = book.find("p", class_="price_color").text.strip()
-        rating = book.find("p", class_="star-rating")["class"][1]
-        stock = book.find("p", class_="instock availability").text.strip()
 
-        relative_url = book.find("a")["href"]
-        product_url = urljoin(base_url, relative_url)
+        # extract product page URL
+        product_url = urljoin(base_url, book.find("a")["href"])
         product_urls.append(product_url)
-
-        print(f"Title: {title}")
-        print(f"Rating: {rating}")
-        print(f"Price: {price}")
-        print(f"Stock: {stock}")
-        print(f"Product URL: {product_url}")
-        print("-" * 40)
 
     return product_urls
 
 
 # =========================================================
-# 📘 PARSE PRODUCT PAGE
+# 📘 PARSE PRODUCT PAGE (DETAILED DATA)
 # =========================================================
+
+all_books = []  # 📦 FINAL STORAGE (important for CSV export)
 
 async def parse_product_page(session, product_url):
     """
-    Fetch and extract detailed product info
+    Extract full book details from individual product page
     """
 
     soup = await fetch_soup(session, product_url)
@@ -216,6 +282,9 @@ async def parse_product_page(session, product_url):
         return
 
     try:
+        # -------------------------
+        # BASIC BOOK INFORMATION
+        # -------------------------
         title = soup.find("h1").text.strip()
 
         breadcrumb = soup.find("ul", class_="breadcrumb").find_all("li")
@@ -224,10 +293,7 @@ async def parse_product_page(session, product_url):
         price = soup.find("p", class_="price_color").text.strip()
 
         stock_text = soup.find("p", class_="instock availability").text.strip()
-        stock = (
-            stock_text.split("(")[1].split("available")[0].strip()
-            if "(" in stock_text else "0"
-        )
+        stock = stock_text.split("(")[1].split("available")[0].strip() if "(" in stock_text else "0"
 
         rating = soup.find("p", class_="star-rating")["class"][1]
 
@@ -236,29 +302,65 @@ async def parse_product_page(session, product_url):
         desc_tag = soup.find("meta", {"name": "description"})
         description = desc_tag["content"].strip() if desc_tag else "No description"
 
-        print(f"📘 Title: {title}")
-        print(f"Category: {category}")
-        print(f"Rating: {rating}")
-        print(f"Price: {price}")
-        print(f"Stock Available: {stock}")
-        print(f"UPC: {upc}")
-        print(f"Description: {description}")
-        print("=" * 50)
+        # -------------------------
+        # STORE CLEAN STRUCTURED DATA
+        # -------------------------
+        all_books.append({
+            "Title": title,
+            "Category": category,
+            "Price": price,
+            "Rating": rating,
+            "Stock": stock,
+            "UPC": upc,
+            "Description": description,
+            "URL": product_url
+        })
 
     except Exception as e:
         print(f"⚠️ Parsing error: {product_url} | {e}")
 
 
 # =========================================================
-# 🚀 MAIN SCRAPER LOOP
+# 💾 SAVE DATA TO CSV (FINAL STEP)
+# =========================================================
+
+def save_to_csv(filename="books.csv"):
+    """
+    Converts collected data into a CSV file
+
+    WHY THIS IS IMPORTANT:
+    - CSV = universal format
+    - can open in Excel, Google Sheets, Python, ML tools
+    """
+
+    if not all_books:
+        print("⚠️ No data to save")
+        return
+
+    keys = all_books[0].keys()
+
+    with open(filename, "w", newline="", encoding="utf-8-sig") as file:
+        writer = csv.DictWriter(file, fieldnames=keys)
+        writer.writeheader()
+        writer.writerows(all_books)
+
+    print(f"\n📁 Saved {len(all_books)} records → {filename}")
+
+
+# =========================================================
+# 🚀 MAIN SCRAPER WORKFLOW
 # =========================================================
 
 async def scrape_all_pages():
     """
-    Workflow:
-    1. Loop catalogue pages
-    2. Extract product URLs
-    3. Scrape product pages concurrently
+    FULL PROCESS:
+
+    1. Open website
+    2. Go page by page
+    3. Extract product URLs
+    4. Scrape product pages concurrently
+    5. Store data in memory
+    6. Export to CSV at end
     """
 
     page_number = 1
@@ -267,34 +369,41 @@ async def scrape_all_pages():
     async with aiohttp.ClientSession(headers=HEADERS) as session:
 
         while current_url:
+
             print(f"\n🚀 Scraping Page {page_number}: {current_url}\n")
 
+            # get catalogue page
             soup = await fetch_soup(session, current_url)
+
             if not soup:
                 break
 
+            # extract product links
             product_urls = parse_catalogue_page(soup, current_url)
 
-            print(f"\n📄 Finished catalogue page {page_number}\n")
+            # scrape product pages concurrently
+            tasks = [
+                parse_product_page(session, url)
+                for url in product_urls
+            ]
 
-            tasks = [parse_product_page(session, url) for url in product_urls]
             await asyncio.gather(*tasks)
 
-            print(f"\n✅ Finished detail scraping for page {page_number}\n")
-
+            # move to next page
             next_btn = soup.find("li", class_="next")
+
             if next_btn:
-                next_url = next_btn.find("a")["href"]
-                current_url = urljoin(current_url, next_url)
+                current_url = urljoin(current_url, next_btn.find("a")["href"])
                 page_number += 1
             else:
                 current_url = None
 
-    print("\n🎉 Scraping completed!")
+    # export after scraping completes
+    save_to_csv()
 
 
 # =========================================================
-# ▶️ ENTRY POINT
+# ▶️ START PROGRAM
 # =========================================================
 
 if __name__ == "__main__":
