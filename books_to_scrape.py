@@ -32,7 +32,6 @@ So this scraper:
 import asyncio          # for async programming (concurrent tasks)
 import aiohttp         # for async HTTP requests
 import time            # to measure response speed
-import random          # for small delays (human-like behavior)
 import csv             # for saving final data to CSV
 from urllib.parse import urljoin  # to build full URLs
 from bs4 import BeautifulSoup as bs4  # to parse HTML
@@ -46,7 +45,7 @@ BASE_URL = "https://books.toscrape.com/"
 
 # Headers make our request look like a real browser
 HEADERS = {
-    "User-Agent": "Mozilla/5.0"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 }
 
 
@@ -336,7 +335,8 @@ def save_to_csv(filename="books.csv"):
     if not all_books:
         print("⚠️ No data to save")
         return
-
+    
+    # get CSV headers from keys of first record
     keys = all_books[0].keys()
 
     with open(filename, "w", newline="", encoding="utf-8-sig") as file:
